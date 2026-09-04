@@ -17,6 +17,12 @@ const IPADS = {
   pro13: { label: 'iPad Air / Pro · 12.9–13英寸', short: '13″', widthCm: 28.16, factor: 0.94 },
 } as const;
 
+const CAPTURED_PROFILE = {
+  free: { third: 150, parachute: 152, first: 70 },
+  camera: { third: 180, first: 88, red: 95, x2: 30, x3: 35, x4: 14, x6: 12, x8: 7 },
+  firing: { third: 150, first: 88, red: 100, x2: 30, x3: 22, x4: 20, x6: 10, x8: 7 },
+} as const;
+
 const TEST_SECONDS = 10;
 const clamp = (n: number, min: number, max: number) => Math.min(max, Math.max(min, Math.round(n)));
 
@@ -176,7 +182,7 @@ function TestFrame({icon,title,metric,hint,state,remaining,onReset,children}:{ic
 function ResultOverlay({big,label,onAgain}:{big:string;label:string;onAgain:()=>void}){return <div className="absolute inset-0 z-10 grid place-items-center bg-[#081011]/90 backdrop-blur-sm"><div className="text-center"><Sparkles className="mx-auto mb-3 size-6 text-primary"/><div className="font-mono text-5xl font-bold tracking-tight text-primary">{big}</div><p className="mt-2 text-muted-foreground">{label}</p><Button className="mt-5" variant="outline" onClick={onAgain}><RotateCcw/>再测一次</Button></div></div>}
 
 export default function Home(){
-  const [device,setDevice]=useState<keyof typeof IPADS>('pro11'); const [fingers,setFingers]=useState('4'); const [gyro,setGyro]=useState('scope'); const [recoil,setRecoil]=useState('slight-up'); const [current,setCurrent]=useState(100);
+  const [device,setDevice]=useState<keyof typeof IPADS>('pro11'); const [fingers,setFingers]=useState('4'); const [gyro,setGyro]=useState('scope'); const [recoil,setRecoil]=useState('stable'); const [current,setCurrent]=useState(180);
   const [tracking,setTracking]=useState<number|null>(null); const [positioning,setPositioning]=useState<{hits:number;reaction:number}|null>(null); const [turn,setTurn]=useState<number|null>(null); const [generated,setGenerated]=useState(false);
   useEffect(()=>{
     const context=(document as Document & {modelContext?:{registerTool:(tool:unknown,options?:{signal:AbortSignal})=>void|Promise<void>}}).modelContext;
@@ -188,12 +194,16 @@ export default function Home(){
   },[]);
   const allDone=tracking!==null&&positioning!==null&&turn!==null;
   const output=useMemo(()=>{
-    const d=IPADS[device]; const track=tracking??58; const hits=positioning?.hits??10; const reaction=positioning?.reaction||620; const recoilAdjust={up:14,'slight-up':7,stable:0,down:-8}[recoil]??0; const fingerAdjust=(Number(fingers)-4)*2;
-    const trackAdjust=(60-track)*.16; const speedAdjust=clamp((reaction-520)/35,-5,8); const turnTarget=device==='mini'?23:device==='pro13'?31:27; const turnAdjust=turn?clamp(((turn-turnTarget)/turnTarget)*18,-14,14):0;
-    const general=clamp(96*d.factor+fingerAdjust+speedAdjust+turnAdjust,1,400); const vertical=clamp(100+recoilAdjust+trackAdjust,50,200); const aim=clamp(58*d.factor+speedAdjust+(hits<8?4:0),1,400); const ads=clamp(54*d.factor+recoilAdjust*.45+trackAdjust,1,400);
-    const scopes=[['红点 / 全息',1],['2倍镜',.72],['3倍镜',.54],['4倍镜 / VSS',.42],['6倍镜',.24],['8倍镜',.15]].map(([name,m])=>({name:name as string,value:clamp(ads*(m as number),1,400)}));
-    return {general,vertical,aim,ads,scopes};
-  },[device,fingers,recoil,tracking,positioning,turn]);
+    const d=IPADS[device]; const track=tracking??58; const hits=positioning?.hits??10; const reaction=positioning?.reaction||620; const recoilAdjust={up:12,'slight-up':5,stable:0,down:-7}[recoil]??0; const fingerAdjust=(Number(fingers)-4)*2;
+    const trackAdjust=tracking===null?0:clamp((60-track)*.12,-5,8); const speedAdjust=positioning===null?0:clamp((reaction-520)/45,-4,7); const turnTarget=device==='mini'?23:device==='pro13'?31:27; const turnAdjust=turn?clamp(((turn-turnTarget)/turnTarget)*14,-12,12):0; const gyroRelief=allDone?(gyro==='always'?-4:gyro==='scope'?-2:0):0;
+    const cameraScale=d.factor+(speedAdjust+turnAdjust+fingerAdjust)/100;
+    const firingScale=d.factor+(trackAdjust+recoilAdjust+gyroRelief)/100;
+    const free={third:clamp(CAPTURED_PROFILE.free.third*cameraScale,1,400),parachute:clamp(CAPTURED_PROFILE.free.parachute*cameraScale,1,400),first:clamp(CAPTURED_PROFILE.free.first*cameraScale,1,400)};
+    const makeGroup=(source:Record<keyof typeof CAPTURED_PROFILE.camera,number>,scale:number)=>Object.fromEntries(Object.entries(source).map(([k,v])=>[k,clamp(v*scale,1,400)])) as Record<keyof typeof CAPTURED_PROFILE.camera,number>;
+    const camera=makeGroup(CAPTURED_PROFILE.camera,cameraScale); const firing=makeGroup(CAPTURED_PROFILE.firing,firingScale);
+    const vertical=clamp(100+recoilAdjust+trackAdjust+gyroRelief,50,200); const aim=clamp((camera.red+camera.third)/2,1,400); const ads=clamp((firing.red+firing.x2)/2,1,400);
+    return {general:camera.third,vertical,aim,ads,free,camera,firing,hits};
+  },[device,fingers,gyro,recoil,tracking,positioning,turn]);
   const insight=useMemo(()=>{if(!allDone)return '完成三项测试后，将结合跟踪、反应与转身距离校准这组基线。'; if((tracking??0)<55)return '跟踪精度偏低：先将红点与 2 倍镜各下调 3%，练两局后再测，避免追枪时反复越过目标。'; if((positioning?.reaction??999)>650)return '定位反应较慢：常规与瞄准灵敏度可各提高 3%，优先改善近距离转向，再微调倍镜。'; if((turn??0)>32)return '转身距离偏长：常规灵敏度建议先上调 4%，目标是一次舒适滑动完成约 180°。'; return '数据较均衡：先原样使用 2–3 局；若压枪仍向上飘，只提高垂直增强 3%，不要同时改多个参数。';},[allDone,tracking,positioning,turn]);
   return <main className="mx-auto min-h-screen max-w-[1360px] px-4 py-5 sm:px-6 lg:px-8">
     <header className="mb-5 flex flex-wrap items-center justify-between gap-4 border-b border-border pb-5"><div className="flex items-center gap-3"><div className="grid size-10 place-items-center rounded-xl bg-primary text-primary-foreground"><Crosshair className="size-6"/></div><div><h1 className="text-xl font-bold tracking-tight">iPad 压枪灵敏度实验室</h1><p className="text-sm text-muted-foreground">和平精英 · 指针 / 触控调试助手</p></div></div><div className="flex items-center gap-2 rounded-full border border-border bg-card px-3 py-2 text-sm text-muted-foreground"><span className="size-2 rounded-full bg-primary shadow-[0_0_10px_#d8ff35]"/>数值范围已限制为游戏可录入区间</div></header>
@@ -206,8 +216,8 @@ export default function Home(){
             <Field label="陀螺仪"><Select value={gyro} onValueChange={(v)=>setGyro(v as string)}><SelectTrigger className="h-11 w-full bg-[#11191a]"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="off">关闭</SelectItem><SelectItem value="scope">开镜开启</SelectItem><SelectItem value="always">全程开启</SelectItem></SelectContent></Select></Field>
             <Field label="当前压枪表现"><Select value={recoil} onValueChange={(v)=>setRecoil(v as string)}><SelectTrigger className="h-11 w-full bg-[#11191a]"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="up">枪口明显上飘</SelectItem><SelectItem value="slight-up">枪口略微上飘</SelectItem><SelectItem value="stable">基本稳定</SelectItem><SelectItem value="down">经常向下过压</SelectItem></SelectContent></Select></Field>
           </div>
-          <div className="mt-6 rounded-xl border border-border bg-[#11191a] p-4"><div className="mb-4 flex items-center justify-between"><label className="text-sm text-muted-foreground">当前常规灵敏度</label><b className="font-mono text-primary">{current}%</b></div><Slider min={1} max={400} step={1} value={[current]} onValueChange={(v)=>setCurrent(Array.isArray(v)?Number(v[0]):Number(v))}/><div className="mt-3 flex justify-between text-xs text-muted-foreground"><span>1</span><span>400</span></div></div>
-          <div className="mt-5 rounded-xl border border-primary/20 bg-primary/[.055] p-4 text-sm leading-6 text-muted-foreground"><b className="text-foreground">当前适配：</b>{IPADS[device].short} 横竖屏布局；测试区域会按真实屏幕宽度换算转身距离。</div>
+          <div className="mt-6 rounded-xl border border-border bg-[#11191a] p-4"><div className="mb-4 flex items-center justify-between"><label className="text-sm text-muted-foreground">当前第三人称不开镜</label><b className="font-mono text-primary">{current}%</b></div><Slider min={1} max={400} step={1} value={[current]} onValueChange={(v)=>setCurrent(Array.isArray(v)?Number(v[0]):Number(v))}/><div className="mt-3 flex justify-between text-xs text-muted-foreground"><span>1</span><span>400</span></div></div>
+          <div className="mt-5 rounded-xl border border-primary/20 bg-primary/[.055] p-4 text-sm leading-6 text-muted-foreground"><b className="text-foreground">已录入截图方案：</b>自由镜头 3 项、镜头 6 项、开火镜头 6 项。6 倍与 8 倍未出现在照片中，暂以安全低敏值补全。</div>
         </aside>
         <section className="min-w-0 p-5 lg:p-7"><div className="mb-5"><p className="text-xs font-semibold uppercase tracking-[.18em] text-primary">02 / 10 秒校准</p><div className="mt-1 flex flex-wrap items-end justify-between gap-3"><h2 className="text-2xl font-semibold tracking-tight">移入测试区，立即开始</h2><p className="text-sm text-muted-foreground">不需点击 · 鼠标、触控笔与触控均可</p></div></div>
           <Tabs defaultValue="tracking"><TabsList className="mb-5 h-11 w-full justify-start gap-1 overflow-x-auto rounded-xl bg-[#0b1112] p-1"><TabsTrigger value="tracking" className="min-w-[130px] px-4"><ScanLine/>追踪</TabsTrigger><TabsTrigger value="positioning" className="min-w-[130px] px-4"><Target/>定位</TabsTrigger><TabsTrigger value="turn" className="min-w-[150px] px-4"><RotateCcw/>360°转身</TabsTrigger></TabsList><TabsContent value="tracking"><TrackingTest onComplete={setTracking}/></TabsContent><TabsContent value="positioning"><PositioningTest onComplete={setPositioning}/></TabsContent><TabsContent value="turn"><TurnTest device={device} current={current} onComplete={setTurn}/></TabsContent></Tabs>
@@ -215,8 +225,8 @@ export default function Home(){
         </section>
       </div>
       <section className="border-t border-border bg-[#090e0f] p-5 lg:p-7"><div className="mb-5 flex flex-wrap items-end justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-[.18em] text-primary">03 / 专属方案</p><h2 className="mt-1 text-2xl font-semibold">可直接录入游戏的灵敏度</h2></div><Button size="lg" className="h-11 px-5" onClick={()=>setGenerated(true)}><Sparkles/> {allDone?'生成测试方案':'生成基线方案'}</Button></div>
-        <div className="grid gap-3 md:grid-cols-4"><Stat label="常规灵敏度" value={output.general} suffix="%"/><Stat label="垂直灵敏度增强" value={output.vertical} suffix="%"/><Stat label="瞄准灵敏度" value={output.aim} suffix="%"/><Stat label="开镜模式灵敏度" value={output.ads} suffix="%"/></div>
-        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">{output.scopes.map(s=><div key={s.name} className="rounded-xl border border-border bg-card p-3"><p className="text-xs text-muted-foreground">{s.name}</p><p className="mt-1 font-mono text-xl font-bold">{s.value}<span className="ml-0.5 text-xs text-muted-foreground">%</span></p></div>)}</div>
+        <div className="grid gap-3 md:grid-cols-4"><Stat label="常规 / 三人称不开镜" value={output.general} suffix="%"/><Stat label="垂直压枪补偿" value={output.vertical} suffix="%"/><Stat label="瞄准灵敏度参考" value={output.aim} suffix="%"/><Stat label="开镜压枪参考" value={output.ads} suffix="%"/></div>
+        <Tabs defaultValue="camera" className="mt-4"><TabsList className="h-11 w-full justify-start gap-1 overflow-x-auto rounded-xl bg-card p-1"><TabsTrigger value="free" className="min-w-[130px] px-4">自由镜头</TabsTrigger><TabsTrigger value="camera" className="min-w-[150px] px-4">镜头灵敏度</TabsTrigger><TabsTrigger value="firing" className="min-w-[170px] px-4">开火镜头灵敏度</TabsTrigger></TabsList><TabsContent value="free"><SensitivityGrid items={[['第三人称人物 / 载具',output.free.third],['跳伞状态',output.free.parachute],['第一人称人物',output.free.first]]}/></TabsContent><TabsContent value="camera"><SensitivityGrid items={scopeItems(output.camera)}/></TabsContent><TabsContent value="firing"><SensitivityGrid items={scopeItems(output.firing)}/></TabsContent></Tabs>
         <div className={`mt-5 flex gap-3 rounded-xl border p-4 transition-colors ${generated?'border-primary/35 bg-primary/[.06]':'border-border bg-card'}`}><Sparkles className="mt-0.5 size-5 shrink-0 text-primary"/><div><p className="font-semibold">微调建议</p><p className="mt-1 text-sm leading-6 text-muted-foreground">{insight}</p><p className="mt-1 text-xs text-muted-foreground">每次只调整一项，幅度控制在 3%–5%；最终以训练场连续压枪手感为准。</p></div></div>
       </section>
     </div>
@@ -226,3 +236,5 @@ export default function Home(){
 
 function Field({label,children}:{label:string;children:React.ReactNode}){return <div><label className="mb-2 block text-sm font-medium text-muted-foreground">{label}</label>{children}</div>}
 function Stat({label,value,suffix}:{label:string;value:number;suffix:string}){return <div className="rounded-xl border border-border bg-card p-4"><div className="flex items-center justify-between"><p className="text-sm text-muted-foreground">{label}</p><Crosshair className="size-4 text-primary/70"/></div><p className="mt-3 font-mono text-3xl font-bold tracking-tight text-primary">{value}<span className="ml-1 text-sm text-muted-foreground">{suffix}</span></p></div>}
+function scopeItems(values:Record<keyof typeof CAPTURED_PROFILE.camera,number>):[string,number][]{return [['第三人称不开镜',values.third],['第一人称不开镜',values.first],['红点 / 全息 / 机瞄 / 侧瞄',values.red],['2倍镜 / Win94 / P90',values.x2],['3倍镜',values.x3],['4倍镜 / VSS',values.x4],['6倍镜（建议）',values.x6],['8倍镜（建议）',values.x8]]}
+function SensitivityGrid({items}:{items:[string,number][]}){return <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">{items.map(([name,value])=><div key={name} className="rounded-xl border border-border bg-card p-3"><p className="min-h-8 text-xs leading-4 text-muted-foreground">{name}</p><p className="mt-1 font-mono text-xl font-bold">{value}<span className="ml-0.5 text-xs text-muted-foreground">%</span></p></div>)}</div>}
